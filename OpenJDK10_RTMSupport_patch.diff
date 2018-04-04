@@ -1,157 +1,233 @@
-Index: src/hotspot/cpu/x86/assembler_x86.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/x86/assembler_x86.hpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/cpu/x86/assembler_x86.hpp	(revision 47048:461a89bec47d1990dd8d8565a88e5b96789d8c14)
-@@ -1829,6 +1829,7 @@
-   void xaddq(Address dst, Register src);
+# HG changeset patch
+# User Nikita Koval <ndkoval@yandex.ru>
+# Date 1522878356 0
+#      Wed Apr 04 21:45:56 2018 +0000
+# Branch develop
+# Node ID 5c69daef4981bf9ed5a3dd526930edb4d38da98d
+# Parent  5eda089f151b9a33e8592a87bb0e1cc9a20f667d
+# Parent  6054e47a29c97e52d0a65e0e0130dfc215a29180
+Merged in rtm-nikita (pull request #1)
 
-   void xbegin(Label& abort, relocInfo::relocType rtype = relocInfo::none);
-+  void xbegin(Register dst);
+Add restricted transactional memory primitives support: RTMSupport.java + intrinsics (interpreter + C1 + C2)
 
-   void xchgb(Register reg, Address adr);
-   void xchgw(Register reg, Address adr);
-@@ -1852,6 +1853,8 @@
-   void xorq(Register dst, Address src);
-   void xorq(Register dst, Register src);
+Approved-by: Nikita Koval <ndkoval@yandex.ru>
 
-+  void xtest(Register dst);
-+
-   void set_byte_if_not_zero(Register dst); // sets reg to 1 if not zero, otherwise 0
-
-   // AVX 3-operands scalar instructions (encoded with VEX prefix)
-Index: src/hotspot/share/opto/intrinsicnode.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/intrinsicnode.hpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/intrinsicnode.hpp	(revision 47050:259c3a314bf5075f4008928703a6e24ab2a176c8)
-@@ -180,4 +180,20 @@
-   virtual const Type* Value(PhaseGVN* phase) const;
- };
-
-+class XBeginNode: public Node {
-+public:
-+    XBeginNode(Node* control): Node(control) {};
-+    virtual int Opcode() const;
-+    virtual const Type* bottom_type() const { return TypeInt::INT; }
-+    virtual uint ideal_reg() const { return Op_RegI; }
-+};
-+
-+class XTestNode: public Node {
-+public:
-+    XTestNode(Node* control): Node(control) {};
-+    virtual int Opcode() const;
-+    virtual const Type* bottom_type() const { return TypeInt::BOOL; }
-+    virtual uint ideal_reg() const { return Op_RegI; }
-+};
-+
- #endif // SHARE_VM_OPTO_INTRINSICNODE_HPP
-Index: src/hotspot/share/opto/library_call.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/library_call.cpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/library_call.cpp	(revision 47050:259c3a314bf5075f4008928703a6e24ab2a176c8)
-@@ -287,6 +287,10 @@
-   bool inline_unsafe_load_store(BasicType type,  LoadStoreKind kind, AccessKind access_kind);
-   bool inline_unsafe_fence(vmIntrinsics::ID id);
-   bool inline_onspinwait();
-+  bool inline_rtm_xbegin();
-+  bool inline_rtm_xabort();
-+  bool inline_rtm_xend();
-+  bool inline_rtm_xtest();
-   bool inline_fp_conversions(vmIntrinsics::ID id);
-   bool inline_number_methods(vmIntrinsics::ID id);
-   bool inline_reference_get();
-@@ -732,6 +736,11 @@
-
-   case vmIntrinsics::_onSpinWait:               return inline_onspinwait();
-
-+  case vmIntrinsics::_rtm_xbegin:               return inline_rtm_xbegin();
-+  case vmIntrinsics::_rtm_xabort:               return inline_rtm_xabort();
-+  case vmIntrinsics::_rtm_xend:                 return inline_rtm_xend();
-+  case vmIntrinsics::_rtm_xtest:                return inline_rtm_xtest();
-+
-   case vmIntrinsics::_currentThread:            return inline_native_currentThread();
-   case vmIntrinsics::_isInterrupted:            return inline_native_isInterrupted();
-
-@@ -3189,6 +3198,32 @@
-   insert_mem_bar(Op_OnSpinWait);
-   return true;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp
+--- a/src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -2984,6 +2984,22 @@
+   Unimplemented();
  }
-+
-+bool LibraryCallKit::inline_rtm_xbegin() {
-+  assert(VM_Version::supports_rtm(), "RTM must be supported");
-+  Node *res = new XBeginNode(control());
-+  set_result(_gvn.transform(res));
-+  return true;
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
++  Unimplemented();
 +}
 +
-+bool LibraryCallKit::inline_rtm_xabort() {
-+  assert(VM_Version::supports_rtm(), "RTM must be supported");
-+  insert_mem_bar(Op_XAbort);
-+  return true;
++void LIR_Assembler::rtm_xend() {
++  Unimplemented();
 +}
 +
-+bool LibraryCallKit::inline_rtm_xend() {
-+  assert(VM_Version::supports_rtm(), "RTM must be supported");
-+  insert_mem_bar(Op_XEnd);
-+  return true;
++void LIR_Assembler::rtm_xabort() {
++  Unimplemented();
 +}
 +
-+bool LibraryCallKit::inline_rtm_xtest() {
-+  assert(VM_Version::supports_rtm(), "RTM must be supported");
-+  Node *res = new XTestNode(control());
-+  set_result(_gvn.transform(res));
-+  return true;
++void LIR_Assembler::rtm_xtest(LIR_Opr result) {
++  Unimplemented();
 +}
-
- bool LibraryCallKit::klass_needs_init_guard(Node* kls) {
-   if (!kls->is_Con()) {
-Index: src/hotspot/share/opto/memnode.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/memnode.hpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/memnode.hpp	(revision 47050:259c3a314bf5075f4008928703a6e24ab2a176c8)
-@@ -1259,6 +1259,20 @@
-   virtual int Opcode() const;
- };
-
-+class XEndNode: public MemBarNode {
-+public:
-+  XEndNode(Compile* C, int alias_idx, Node* precedent)
-+    : MemBarNode(C, alias_idx, precedent) {}
-+  virtual int Opcode() const;
-+};
 +
-+class XAbortNode: public MemBarNode {
-+public:
-+    XAbortNode(Compile* C, int alias_idx, Node* precedent)
-+            : MemBarNode(C, alias_idx, precedent) {}
-+    virtual int Opcode() const;
-+};
+ void LIR_Assembler::get_thread(LIR_Opr result_reg) {
+   __ mov(result_reg->as_register(), rthread);
+ }
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
+--- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -276,6 +276,22 @@
+   __ blrt(rscratch1, gpargs, fpargs, rtype);
+ }
+ 
++address TemplateInterpreterGenerator::generate_RTMSupport_xbegin() {
++  return NULL;
++}
 +
- // Isolation of object setup after an AllocateNode and before next safepoint.
- // (See comment in memnode.cpp near InitializeNode::InitializeNode for semantics.)
- class InitializeNode: public MemBarNode {
-Index: src/hotspot/cpu/x86/assembler_x86.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/x86/assembler_x86.cpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/cpu/x86/assembler_x86.cpp	(revision 47049:1f373193c63c86e51001cb2990e61c7b6f23e50e)
++address TemplateInterpreterGenerator::generate_RTMSupport_xend() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xabort() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xtest() {
++  return NULL;
++}
++
+ // Abstract method entry
+ // Attempt to execute abstract method. Throw exception
+ address TemplateInterpreterGenerator::generate_abstract_entry(void) {
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp
+--- a/src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -3405,6 +3405,22 @@
+   Unimplemented();
+ }
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xend() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xabort() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xtest(LIR_Opr result) {
++  Unimplemented();
++}
++
+ void LIR_Assembler::get_thread(LIR_Opr result_reg) {
+   // Not used on ARM
+   Unimplemented();
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp
+--- a/src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -2939,6 +2939,22 @@
+   Unimplemented();
+ }
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xend() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xabort() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xtest(LIR_Opr result) {
++  Unimplemented();
++}
++
+ void LIR_Assembler::leal(LIR_Opr addr_opr, LIR_Opr dest) {
+   LIR_Address* addr = addr_opr->as_address_ptr();
+   assert(addr->scale() == LIR_Address::times_1, "no scaling on this platform");
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/ppc/templateInterpreterGenerator_ppc.cpp
+--- a/src/hotspot/cpu/ppc/templateInterpreterGenerator_ppc.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/ppc/templateInterpreterGenerator_ppc.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -1829,6 +1829,22 @@
+   return entry;
+ }
+ 
++address TemplateInterpreterGenerator::generate_RTMSupport_xbegin() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xend() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xabort() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xtest() {
++  return NULL;
++}
++
+ // CRC32 Intrinsics.
+ //
+ // Contract on scratch and work registers.
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp
+--- a/src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -2855,6 +2855,22 @@
+   Unimplemented();
+ }
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xend() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xabort() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xtest(LIR_Opr result) {
++  Unimplemented();
++}
++
+ void LIR_Assembler::leal(LIR_Opr addr_opr, LIR_Opr dest) {
+   LIR_Address* addr = addr_opr->as_address_ptr();
+   assert(addr->scale() == LIR_Address::times_1, "scaling unsupported");
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/s390/templateInterpreterGenerator_s390.cpp
+--- a/src/hotspot/cpu/s390/templateInterpreterGenerator_s390.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/s390/templateInterpreterGenerator_s390.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -1921,6 +1921,23 @@
+ }
+ 
+ 
++address TemplateInterpreterGenerator::generate_RTMSupport_xbegin() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xend() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xabort() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xtest() {
++  return NULL;
++}
++
++
+ /**
+  * Method entry for static native methods:
+  *   int java.util.zip.CRC32.update(int crc, int b)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp
+--- a/src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -3165,6 +3165,22 @@
+   Unimplemented();
+ }
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xend() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xabort() {
++  Unimplemented();
++}
++
++void LIR_Assembler::rtm_xtest(LIR_Opr result) {
++  Unimplemented();
++}
++
+ // Pack two sequential registers containing 32 bit values
+ // into a single 64 bit register.
+ // src and src->successor() are packed into dst
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/assembler_x86.cpp
+--- a/src/hotspot/cpu/x86/assembler_x86.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/assembler_x86.cpp	Wed Apr 04 21:45:56 2018 +0000
 @@ -4666,6 +4666,15 @@
    }
  }
-
+ 
 +void Assembler::xbegin(Register dst) {
 +  // Invoke xbegin instruction and return a value from EAX register
 +  movl(rax, -1); // clear EAX
@@ -167,7 +243,7 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 @@ -4730,6 +4739,21 @@
    emit_operand(dst, src);
  }
-
+ 
 +void Assembler::xtest(Register dst) {
 +  // xtest instruction
 +  emit_int8((unsigned char)0x0F);
@@ -184,59 +260,139 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 +}
 +
  // AVX 3-operands scalar float-point arithmetic instructions
-
+ 
  void Assembler::vaddsd(XMMRegister dst, XMMRegister nds, Address src) {
-Index: src/hotspot/share/opto/classes.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/classes.hpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/classes.hpp	(revision 47048:461a89bec47d1990dd8d8565a88e5b96789d8c14)
-@@ -219,6 +219,10 @@
- macro(NegF)
- macro(NeverBranch)
- macro(OnSpinWait)
-+macro(XBegin)
-+macro(XAbort)
-+macro(XEnd)
-+macro(XTest)
- macro(Opaque1)
- macro(Opaque2)
- macro(Opaque3)
-Index: src/hotspot/share/opto/c2compiler.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/c2compiler.cpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/c2compiler.cpp	(revision 47048:461a89bec47d1990dd8d8565a88e5b96789d8c14)
-@@ -416,6 +416,18 @@
-   case vmIntrinsics::_onSpinWait:
-     if (!Matcher::match_rule_supported(Op_OnSpinWait)) return false;
-     break;
-+  case vmIntrinsics::_rtm_xbegin:
-+    if (!Matcher::match_rule_supported(Op_XBegin)) return false;
-+    break;
-+  case vmIntrinsics::_rtm_xabort:
-+    if (!Matcher::match_rule_supported(Op_XAbort)) return false;
-+    break;
-+  case vmIntrinsics::_rtm_xend:
-+    if (!Matcher::match_rule_supported(Op_XEnd)) return false;
-+    break;
-+  case vmIntrinsics::_rtm_xtest:
-+    if (!Matcher::match_rule_supported(Op_XTest)) return false;
-+    break;
-   case vmIntrinsics::_fmaD:
-     if (!UseFMA || !Matcher::match_rule_supported(Op_FmaD)) return false;
-     break;
-Index: src/hotspot/cpu/x86/x86.ad
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/x86/x86.ad	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/cpu/x86/x86.ad	(revision 47048:461a89bec47d1990dd8d8565a88e5b96789d8c14)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/assembler_x86.hpp
+--- a/src/hotspot/cpu/x86/assembler_x86.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/assembler_x86.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -1829,6 +1829,7 @@
+   void xaddq(Address dst, Register src);
+ 
+   void xbegin(Label& abort, relocInfo::relocType rtype = relocInfo::none);
++  void xbegin(Register dst);
+ 
+   void xchgb(Register reg, Address adr);
+   void xchgw(Register reg, Address adr);
+@@ -1852,6 +1853,8 @@
+   void xorq(Register dst, Address src);
+   void xorq(Register dst, Register src);
+ 
++  void xtest(Register dst);
++
+   void set_byte_if_not_zero(Register dst); // sets reg to 1 if not zero, otherwise 0
+ 
+   // AVX 3-operands scalar instructions (encoded with VEX prefix)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp
+--- a/src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -3925,6 +3925,22 @@
+   __ pause ();
+ }
+ 
++void LIR_Assembler::rtm_xbegin(LIR_Opr result_reg) {
++  __ xbegin(result_reg->as_register());
++}
++
++void LIR_Assembler::rtm_xend() {
++  __ xend();
++}
++
++void LIR_Assembler::rtm_xabort() {
++  __ xabort(0);
++}
++
++void LIR_Assembler::rtm_xtest(LIR_Opr result_reg) {
++  __ xtest(result_reg->as_register());
++}
++
+ void LIR_Assembler::get_thread(LIR_Opr result_reg) {
+   assert(result_reg->is_register(), "check");
+ #ifdef _LP64
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/templateInterpreterGenerator_x86_32.cpp
+--- a/src/hotspot/cpu/x86/templateInterpreterGenerator_x86_32.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/templateInterpreterGenerator_x86_32.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -46,6 +46,22 @@
+   return entry;
+ }
+ 
++address TemplateInterpreterGenerator::generate_RTMSupport_xbegin() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xend() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xabort() {
++  return NULL;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xtest() {
++  return NULL;
++}
++
+ /**
+  * Method entry for static native methods:
+  *   int java.util.zip.CRC32.update(int crc, int b)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/templateInterpreterGenerator_x86_64.cpp
+--- a/src/hotspot/cpu/x86/templateInterpreterGenerator_x86_64.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/templateInterpreterGenerator_x86_64.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -339,6 +339,52 @@
+   return NULL;
+ }
+ 
++address TemplateInterpreterGenerator::generate_RTMSupport_xbegin() {
++  if (!VM_Version::supports_rtm()) return NULL;
++  address entry = __ pc();
++  __ xbegin(rax);
++  // result in rax
++  // _areturn
++  __ pop(rdi);
++  __ mov(rsp, r13);
++  __ jmp(rdi);
++  return entry;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xend() {
++  if (!VM_Version::supports_rtm()) return NULL;
++  address entry = __ pc();
++  __ xend();
++  // _areturn
++  __ pop(rdi);
++  __ mov(rsp, r13);
++  __ jmp(rdi);
++  return entry;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xabort() {
++  if (!VM_Version::supports_rtm()) return NULL;
++  address entry = __ pc();
++  __ xabort(0);
++  // _areturn
++  __ pop(rdi);
++  __ mov(rsp, r13);
++  __ jmp(rdi);
++  return entry;
++}
++
++address TemplateInterpreterGenerator::generate_RTMSupport_xtest() {
++  if (!VM_Version::supports_rtm()) return NULL;
++  address entry = __ pc();
++  __ xtest(rax);
++  // result in rax
++  // _areturn
++  __ pop(rdi);
++  __ mov(rsp, r13);
++  __ jmp(rdi);
++  return entry;
++}
++
+ //
+ // Various method entries
+ //
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/cpu/x86/x86.ad
+--- a/src/hotspot/cpu/x86/x86.ad	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/cpu/x86/x86.ad	Wed Apr 04 21:45:56 2018 +0000
 @@ -1278,6 +1278,13 @@
        if (VM_Version::supports_on_spin_wait() == false)
          ret_value = false;
@@ -249,13 +405,12 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 +        ret_value = false;
 +      break;
    }
-
+ 
    return ret_value;  // Per default match rules are supported.
-@@ -2665,6 +2672,42 @@
-   %}
+@@ -2666,6 +2673,42 @@
    ins_pipe(pipe_slow);
  %}
-+
+ 
 +instruct xBegin(rRegI dst) %{
 +  match(Set dst (XBegin));
 +  format %{ "xbegin" %}
@@ -291,16 +446,149 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 +  %}
 +  ins_pipe( pipe_slow );
 +%}
-
++
  // a * b + c
  instruct fmaD_reg(regD a, regD b, regD c) %{
-Index: src/hotspot/share/classfile/vmSymbols.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/classfile/vmSymbols.hpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/classfile/vmSymbols.hpp	(revision 47048:461a89bec47d1990dd8d8565a88e5b96789d8c14)
+   predicate(UseFMA);
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_Compiler.cpp
+--- a/src/hotspot/share/c1/c1_Compiler.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_Compiler.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -135,6 +135,12 @@
+   case vmIntrinsics::_onSpinWait:
+     if (!VM_Version::supports_on_spin_wait()) return false;
+     break;
++  case vmIntrinsics::_rtm_xbegin:
++  case vmIntrinsics::_rtm_xend:
++  case vmIntrinsics::_rtm_xabort:
++  case vmIntrinsics::_rtm_xtest:
++    if (!VM_Version::supports_rtm()) return false;
++    break;
+   case vmIntrinsics::_arraycopy:
+   case vmIntrinsics::_currentTimeMillis:
+   case vmIntrinsics::_nanoTime:
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_LIR.cpp
+--- a/src/hotspot/share/c1/c1_LIR.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_LIR.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -435,6 +435,8 @@
+     case lir_membar_loadstore:         // result and info always invalid
+     case lir_membar_storeload:         // result and info always invalid
+     case lir_on_spin_wait:
++    case lir_rtm_xend:
++    case lir_rtm_xabort:
+     {
+       assert(op->as_Op0() != NULL, "must be");
+       assert(op->_info == NULL, "info not used by this instruction");
+@@ -446,6 +448,8 @@
+     case lir_std_entry:                // may have result, info always invalid
+     case lir_osr_entry:                // may have result, info always invalid
+     case lir_get_thread:               // may have result, info always invalid
++    case lir_rtm_xbegin:
++    case lir_rtm_xtest:
+     {
+       assert(op->as_Op0() != NULL, "must be");
+       if (op->_info != NULL)           do_info(op->_info);
+@@ -1641,6 +1645,10 @@
+      case lir_label:                 s = "label";         break;
+      case lir_nop:                   s = "nop";           break;
+      case lir_on_spin_wait:          s = "on_spin_wait";  break;
++     case lir_rtm_xbegin:            s = "rtm_xbegin";    break;
++     case lir_rtm_xend:              s = "rtm_xend";      break;
++     case lir_rtm_xabort:            s = "rtm_xabort";    break;
++     case lir_rtm_xtest:             s = "rtm_xtest";     break;
+      case lir_backwardbranch_target: s = "backbranch";    break;
+      case lir_std_entry:             s = "std_entry";     break;
+      case lir_osr_entry:             s = "osr_entry";     break;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_LIR.hpp
+--- a/src/hotspot/share/c1/c1_LIR.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_LIR.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -901,6 +901,10 @@
+       , lir_membar_storeload
+       , lir_get_thread
+       , lir_on_spin_wait
++      , lir_rtm_xbegin
++      , lir_rtm_xend
++      , lir_rtm_xabort
++      , lir_rtm_xtest
+   , end_op0
+   , begin_op1
+       , lir_fxch
+@@ -2064,6 +2068,11 @@
+ 
+   void on_spin_wait()                            { append(new LIR_Op0(lir_on_spin_wait)); }
+ 
++  void rtm_xbegin(LIR_Opr result)                { append(new LIR_Op0(lir_rtm_xbegin, result)); }
++  void rtm_xend()                                { append(new LIR_Op0(lir_rtm_xend)); }
++  void rtm_xabort()                              { append(new LIR_Op0(lir_rtm_xabort)); }
++  void rtm_xtest(LIR_Opr result)                 { append(new LIR_Op0(lir_rtm_xtest, result)); }
++
+   void branch_destination(Label* lbl)            { append(new LIR_OpLabel(lbl)); }
+ 
+   void negate(LIR_Opr from, LIR_Opr to)          { append(new LIR_Op1(lir_neg, from, to)); }
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_LIRAssembler.cpp
+--- a/src/hotspot/share/c1/c1_LIRAssembler.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_LIRAssembler.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -682,6 +682,22 @@
+       on_spin_wait();
+       break;
+ 
++    case lir_rtm_xbegin:
++      rtm_xbegin(op->result_opr());
++      break;
++
++    case lir_rtm_xend:
++      rtm_xend();
++      break;
++
++    case lir_rtm_xabort:
++      rtm_xabort();
++      break;
++
++    case lir_rtm_xtest:
++      rtm_xtest(op->result_opr());
++      break;
++
+     default:
+       ShouldNotReachHere();
+       break;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_LIRAssembler.hpp
+--- a/src/hotspot/share/c1/c1_LIRAssembler.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_LIRAssembler.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -252,6 +252,10 @@
+   void membar_loadstore();
+   void membar_storeload();
+   void on_spin_wait();
++  void rtm_xbegin(LIR_Opr result);
++  void rtm_xend();
++  void rtm_xabort();
++  void rtm_xtest(LIR_Opr result);
+   void get_thread(LIR_Opr result);
+ 
+   void verify_oop_map(CodeEmitInfo* info);
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/c1/c1_LIRGenerator.cpp
+--- a/src/hotspot/share/c1/c1_LIRGenerator.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/c1/c1_LIRGenerator.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -3238,6 +3238,18 @@
+   case vmIntrinsics::_onSpinWait:
+     __ on_spin_wait();
+     break;
++  case vmIntrinsics::_rtm_xbegin:
++    __ rtm_xbegin(rlock_result(x));
++    break;
++  case vmIntrinsics::_rtm_xend:
++    __ rtm_xend();
++    break;
++  case vmIntrinsics::_rtm_xabort:
++    __ rtm_xabort();
++    break;
++  case vmIntrinsics::_rtm_xtest:
++    __ rtm_xtest(rlock_result(x));
++    break;
+   case vmIntrinsics::_Reference_get:
+     do_Reference_get(x);
+     break;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/classfile/vmSymbols.hpp
+--- a/src/hotspot/share/classfile/vmSymbols.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/classfile/vmSymbols.hpp	Wed Apr 04 21:45:56 2018 +0000
 @@ -116,6 +116,7 @@
    template(java_util_Vector,                          "java/util/Vector")                         \
    template(java_util_AbstractList,                    "java/util/AbstractList")                   \
@@ -336,20 +624,258 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
    do_intrinsic(_StringBuilder_String, java_lang_StringBuilder, object_initializer_name, string_void_signature,     F_R)   \
 @@ -1554,7 +1564,7 @@
      #undef VM_INTRINSIC_ENUM
-
+ 
      ID_LIMIT,
 -    LAST_COMPILER_INLINE = _getAndSetObject,
 +    LAST_COMPILER_INLINE = _rtm_xtest,
      FIRST_MH_SIG_POLY    = _invokeGeneric,
      FIRST_MH_STATIC      = _linkToVirtual,
      LAST_MH_SIG_POLY     = _linkToInterface,
-Index: src/hotspot/share/opto/memnode.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/memnode.cpp	(revision 47047:62fc91042610aa75ab363f6685807015ce95ebf5)
-+++ src/hotspot/share/opto/memnode.cpp	(revision 47050:259c3a314bf5075f4008928703a6e24ab2a176c8)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/interpreter/abstractInterpreter.cpp
+--- a/src/hotspot/share/interpreter/abstractInterpreter.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/interpreter/abstractInterpreter.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -110,6 +110,14 @@
+ // Entry points
+ 
+ AbstractInterpreter::MethodKind AbstractInterpreter::method_kind(const methodHandle& m) {
++  if (VM_Version::supports_rtm()) {
++    switch (m->intrinsic_id()) {
++      case vmIntrinsics::_rtm_xbegin : return java_util_concurrent_RTMSupport_xbegin;
++      case vmIntrinsics::_rtm_xend   : return java_util_concurrent_RTMSupport_xend  ;
++      case vmIntrinsics::_rtm_xabort : return java_util_concurrent_RTMSupport_xabort;
++      case vmIntrinsics::_rtm_xtest  : return java_util_concurrent_RTMSupport_xtest ;
++    }
++  }
+   // Abstract method?
+   if (m->is_abstract()) return abstract;
+ 
+@@ -182,7 +190,6 @@
+     case vmIntrinsics::_dexp  : return java_lang_math_exp  ;
+     case vmIntrinsics::_fmaD  : return java_lang_math_fmaD ;
+     case vmIntrinsics::_fmaF  : return java_lang_math_fmaF ;
+-
+     case vmIntrinsics::_Reference_get
+                               : return java_lang_ref_reference_get;
+     default                   : break;
+@@ -282,6 +289,10 @@
+     case java_util_zip_CRC32_updateByteBuffer : tty->print("java_util_zip_CRC32_updateByteBuffer"); break;
+     case java_util_zip_CRC32C_updateBytes     : tty->print("java_util_zip_CRC32C_updateBytes"); break;
+     case java_util_zip_CRC32C_updateDirectByteBuffer: tty->print("java_util_zip_CRC32C_updateDirectByteByffer"); break;
++    case java_util_concurrent_RTMSupport_xbegin : tty->print("java_util_concurrent_RTMSupport_xbegin"); break;
++    case java_util_concurrent_RTMSupport_xend   : tty->print("java_util_concurrent_RTMSupport_xend"  ); break;
++    case java_util_concurrent_RTMSupport_xabort : tty->print("java_util_concurrent_RTMSupport_xabort"); break;
++    case java_util_concurrent_RTMSupport_xtest  : tty->print("java_util_concurrent_RTMSupport_xtest" ); break;
+     default:
+       if (kind >= method_handle_invoke_FIRST &&
+           kind <= method_handle_invoke_LAST) {
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/interpreter/abstractInterpreter.hpp
+--- a/src/hotspot/share/interpreter/abstractInterpreter.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/interpreter/abstractInterpreter.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -88,6 +88,10 @@
+     java_lang_Float_floatToRawIntBits,                          // implementation of java.lang.Float.floatToRawIntBits()
+     java_lang_Double_longBitsToDouble,                          // implementation of java.lang.Double.longBitsToDouble()
+     java_lang_Double_doubleToRawLongBits,                       // implementation of java.lang.Double.doubleToRawLongBits()
++    java_util_concurrent_RTMSupport_xbegin,                     // implementation of java.util.concurrent.RTMSupport.xbegin()
++    java_util_concurrent_RTMSupport_xend,                       // implementation of java.util.concurrent.RTMSupport.xend()
++    java_util_concurrent_RTMSupport_xabort,                     // implementation of java.util.concurrent.RTMSupport.xabort()
++    java_util_concurrent_RTMSupport_xtest,                      // implementation of java.util.concurrent.RTMSupport.xtest()
+     number_of_method_entries,
+     invalid = -1
+   };
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/interpreter/cppInterpreterGenerator.cpp
+--- a/src/hotspot/share/interpreter/cppInterpreterGenerator.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/interpreter/cppInterpreterGenerator.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -59,6 +59,10 @@
+     method_entry(java_lang_math_exp );
+     method_entry(java_lang_math_fmaD );
+     method_entry(java_lang_math_fmaF );
++    method_entry(java_util_concurrent_RTMSupport_xbegin );
++    method_entry(java_util_concurrent_RTMSupport_xend   );
++    method_entry(java_util_concurrent_RTMSupport_xabort );
++    method_entry(java_util_concurrent_RTMSupport_xtest  );
+     method_entry(java_lang_ref_reference_get);
+ 
+     AbstractInterpreter::initialize_method_handle_entries();
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/interpreter/templateInterpreterGenerator.cpp
+--- a/src/hotspot/share/interpreter/templateInterpreterGenerator.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/interpreter/templateInterpreterGenerator.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -221,6 +221,10 @@
+   method_entry(java_lang_math_pow  )
+   method_entry(java_lang_math_fmaF )
+   method_entry(java_lang_math_fmaD )
++  method_entry(java_util_concurrent_RTMSupport_xbegin )
++  method_entry(java_util_concurrent_RTMSupport_xend   )
++  method_entry(java_util_concurrent_RTMSupport_xabort )
++  method_entry(java_util_concurrent_RTMSupport_xtest  )
+   method_entry(java_lang_ref_reference_get)
+ 
+   AbstractInterpreter::initialize_method_handle_entries();
+@@ -421,6 +425,14 @@
+   case Interpreter::java_lang_math_fmaF    : entry_point = generate_math_entry(kind);      break;
+   case Interpreter::java_lang_ref_reference_get
+                                            : entry_point = generate_Reference_get_entry(); break;
++  case Interpreter::java_util_concurrent_RTMSupport_xbegin
++                                           : entry_point = generate_RTMSupport_xbegin();   break;
++  case Interpreter::java_util_concurrent_RTMSupport_xend
++                                           : entry_point = generate_RTMSupport_xend();     break;
++  case Interpreter::java_util_concurrent_RTMSupport_xabort
++                                           : entry_point = generate_RTMSupport_xabort();   break;
++  case Interpreter::java_util_concurrent_RTMSupport_xtest
++                                           : entry_point = generate_RTMSupport_xtest();    break;
+   case Interpreter::java_util_zip_CRC32_update
+                                            : native = true; entry_point = generate_CRC32_update_entry();  break;
+   case Interpreter::java_util_zip_CRC32_updateBytes
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/interpreter/templateInterpreterGenerator.hpp
+--- a/src/hotspot/share/interpreter/templateInterpreterGenerator.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/interpreter/templateInterpreterGenerator.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -94,6 +94,11 @@
+   address generate_CRC32_update_entry();
+   address generate_CRC32_updateBytes_entry(AbstractInterpreter::MethodKind kind);
+   address generate_CRC32C_updateBytes_entry(AbstractInterpreter::MethodKind kind);
++
++  address generate_RTMSupport_xbegin();
++  address generate_RTMSupport_xend();
++  address generate_RTMSupport_xabort();
++  address generate_RTMSupport_xtest();
+ #ifdef IA32
+   address generate_Float_intBitsToFloat_entry();
+   address generate_Float_floatToRawIntBits_entry();
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/c2compiler.cpp
+--- a/src/hotspot/share/opto/c2compiler.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/c2compiler.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -416,6 +416,18 @@
+   case vmIntrinsics::_onSpinWait:
+     if (!Matcher::match_rule_supported(Op_OnSpinWait)) return false;
+     break;
++  case vmIntrinsics::_rtm_xbegin:
++    if (!Matcher::match_rule_supported(Op_XBegin)) return false;
++    break;
++  case vmIntrinsics::_rtm_xabort:
++    if (!Matcher::match_rule_supported(Op_XAbort)) return false;
++    break;
++  case vmIntrinsics::_rtm_xend:
++    if (!Matcher::match_rule_supported(Op_XEnd)) return false;
++    break;
++  case vmIntrinsics::_rtm_xtest:
++    if (!Matcher::match_rule_supported(Op_XTest)) return false;
++    break;
+   case vmIntrinsics::_fmaD:
+     if (!UseFMA || !Matcher::match_rule_supported(Op_FmaD)) return false;
+     break;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/classes.hpp
+--- a/src/hotspot/share/opto/classes.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/classes.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -219,6 +219,10 @@
+ macro(NegF)
+ macro(NeverBranch)
+ macro(OnSpinWait)
++macro(XBegin)
++macro(XAbort)
++macro(XEnd)
++macro(XTest)
+ macro(Opaque1)
+ macro(Opaque2)
+ macro(Opaque3)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/intrinsicnode.hpp
+--- a/src/hotspot/share/opto/intrinsicnode.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/intrinsicnode.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -180,4 +180,20 @@
+   virtual const Type* Value(PhaseGVN* phase) const;
+ };
+ 
++class XBeginNode: public Node {
++public:
++    XBeginNode(Node* control): Node(control) {};
++    virtual int Opcode() const;
++    virtual const Type* bottom_type() const { return TypeInt::INT; }
++    virtual uint ideal_reg() const { return Op_RegI; }
++};
++
++class XTestNode: public Node {
++public:
++    XTestNode(Node* control): Node(control) {};
++    virtual int Opcode() const;
++    virtual const Type* bottom_type() const { return TypeInt::BOOL; }
++    virtual uint ideal_reg() const { return Op_RegI; }
++};
++
+ #endif // SHARE_VM_OPTO_INTRINSICNODE_HPP
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/library_call.cpp
+--- a/src/hotspot/share/opto/library_call.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/library_call.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -287,6 +287,10 @@
+   bool inline_unsafe_load_store(BasicType type,  LoadStoreKind kind, AccessKind access_kind);
+   bool inline_unsafe_fence(vmIntrinsics::ID id);
+   bool inline_onspinwait();
++  bool inline_rtm_xbegin();
++  bool inline_rtm_xabort();
++  bool inline_rtm_xend();
++  bool inline_rtm_xtest();
+   bool inline_fp_conversions(vmIntrinsics::ID id);
+   bool inline_number_methods(vmIntrinsics::ID id);
+   bool inline_reference_get();
+@@ -732,6 +736,11 @@
+ 
+   case vmIntrinsics::_onSpinWait:               return inline_onspinwait();
+ 
++  case vmIntrinsics::_rtm_xbegin:               return inline_rtm_xbegin();
++  case vmIntrinsics::_rtm_xabort:               return inline_rtm_xabort();
++  case vmIntrinsics::_rtm_xend:                 return inline_rtm_xend();
++  case vmIntrinsics::_rtm_xtest:                return inline_rtm_xtest();
++
+   case vmIntrinsics::_currentThread:            return inline_native_currentThread();
+   case vmIntrinsics::_isInterrupted:            return inline_native_isInterrupted();
+ 
+@@ -3190,6 +3199,32 @@
+   return true;
+ }
+ 
++bool LibraryCallKit::inline_rtm_xbegin() {
++  assert(VM_Version::supports_rtm(), "RTM must be supported");
++  Node *res = new XBeginNode(control());
++  set_result(_gvn.transform(res));
++  return true;
++}
++
++bool LibraryCallKit::inline_rtm_xabort() {
++  assert(VM_Version::supports_rtm(), "RTM must be supported");
++  insert_mem_bar(Op_XAbort);
++  return true;
++}
++
++bool LibraryCallKit::inline_rtm_xend() {
++  assert(VM_Version::supports_rtm(), "RTM must be supported");
++  insert_mem_bar(Op_XEnd);
++  return true;
++}
++
++bool LibraryCallKit::inline_rtm_xtest() {
++  assert(VM_Version::supports_rtm(), "RTM must be supported");
++  Node *res = new XTestNode(control());
++  set_result(_gvn.transform(res));
++  return true;
++}
++
+ bool LibraryCallKit::klass_needs_init_guard(Node* kls) {
+   if (!kls->is_Con()) {
+     return true;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/matcher.cpp
+--- a/src/hotspot/share/opto/matcher.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/matcher.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -952,6 +952,10 @@
+     case Op_StrInflatedCopy:
+     case Op_StrCompressedCopy:
+     case Op_OnSpinWait:
++    case Op_XBegin:
++    case Op_XEnd:
++    case Op_XAbort:
++    case Op_XTest:
+     case Op_EncodeISOArray:
+       nidx = Compile::AliasIdxTop;
+       nat = NULL;
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/memnode.cpp
+--- a/src/hotspot/share/opto/memnode.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/memnode.cpp	Wed Apr 04 21:45:56 2018 +0000
 @@ -2935,6 +2935,8 @@
    case Op_MemBarVolatile:    return new MemBarVolatileNode(C, atp, pn);
    case Op_MemBarCPUOrder:    return new MemBarCPUOrderNode(C, atp, pn);
@@ -359,13 +885,47 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
    case Op_Initialize:        return new InitializeNode(C, atp, pn);
    case Op_MemBarStoreStore:  return new MemBarStoreStoreNode(C, atp, pn);
    default: ShouldNotReachHere(); return NULL;
-Index: src/java.base/share/classes/java/util/concurrent/RTMSupport.java
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/java.base/share/classes/java/util/concurrent/RTMSupport.java	(revision 47060:da06cbcbecacd48f343d6cb6c2b2ad2884bacf09)
-+++ src/java.base/share/classes/java/util/concurrent/RTMSupport.java	(revision 47060:da06cbcbecacd48f343d6cb6c2b2ad2884bacf09)
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/opto/memnode.hpp
+--- a/src/hotspot/share/opto/memnode.hpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/opto/memnode.hpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -1259,6 +1259,20 @@
+   virtual int Opcode() const;
+ };
+ 
++class XEndNode: public MemBarNode {
++public:
++  XEndNode(Compile* C, int alias_idx, Node* precedent)
++    : MemBarNode(C, alias_idx, precedent) {}
++  virtual int Opcode() const;
++};
++
++class XAbortNode: public MemBarNode {
++public:
++    XAbortNode(Compile* C, int alias_idx, Node* precedent)
++            : MemBarNode(C, alias_idx, precedent) {}
++    virtual int Opcode() const;
++};
++
+ // Isolation of object setup after an AllocateNode and before next safepoint.
+ // (See comment in memnode.cpp near InitializeNode::InitializeNode for semantics.)
+ class InitializeNode: public MemBarNode {
+diff -r 5eda089f151b -r 5c69daef4981 src/hotspot/share/runtime/vmStructs.cpp
+--- a/src/hotspot/share/runtime/vmStructs.cpp	Mon Feb 05 14:53:37 2018 +0000
++++ b/src/hotspot/share/runtime/vmStructs.cpp	Wed Apr 04 21:45:56 2018 +0000
+@@ -1802,6 +1802,10 @@
+   declare_c2_type(MemBarCPUOrderNode, MemBarNode)                         \
+   declare_c2_type(OnSpinWaitNode, MemBarNode)                             \
+   declare_c2_type(InitializeNode, MemBarNode)                             \
++  declare_c2_type(XBeginNode, Node)                                       \
++  declare_c2_type(XEndNode, MemBarNode)                                   \
++  declare_c2_type(XAbortNode, MemBarNode)                                 \
++  declare_c2_type(XTestNode, Node)                                        \
+   declare_c2_type(ThreadLocalNode, Node)                                  \
+   declare_c2_type(Opaque1Node, Node)                                      \
+   declare_c2_type(Opaque2Node, Node)                                      \
+diff -r 5eda089f151b -r 5c69daef4981 src/java.base/share/classes/java/util/concurrent/RTMSupport.java
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/java.base/share/classes/java/util/concurrent/RTMSupport.java	Wed Apr 04 21:45:56 2018 +0000
 @@ -0,0 +1,111 @@
 +package java.util.concurrent;
 +
@@ -478,379 +1038,3 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 +        return false;
 +    }
 +}
-Index: src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -2984,6 +2984,22 @@
-   Unimplemented();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
- void LIR_Assembler::get_thread(LIR_Opr result_reg) {
-   __ mov(result_reg->as_register(), rthread);
- }
-Index: src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/sparc/c1_LIRAssembler_sparc.cpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -3165,6 +3165,22 @@
-   Unimplemented();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
- // Pack two sequential registers containing 32 bit values
- // into a single 64 bit register.
- // src and src->successor() are packed into dst
-Index: src/hotspot/share/runtime/vmStructs.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/runtime/vmStructs.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/runtime/vmStructs.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -1802,6 +1802,10 @@
-   declare_c2_type(MemBarCPUOrderNode, MemBarNode)                         \
-   declare_c2_type(OnSpinWaitNode, MemBarNode)                             \
-   declare_c2_type(InitializeNode, MemBarNode)                             \
-+  declare_c2_type(XBeginNode, Node)                                       \
-+  declare_c2_type(XEndNode, MemBarNode)                                   \
-+  declare_c2_type(XAbortNode, MemBarNode)                                 \
-+  declare_c2_type(XTestNode, Node)                                        \
-   declare_c2_type(ThreadLocalNode, Node)                                  \
-   declare_c2_type(Opaque1Node, Node)                                      \
-   declare_c2_type(Opaque2Node, Node)                                      \
-Index: src/hotspot/share/c1/c1_LIR.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_LIR.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_LIR.cpp	(revision 47060:da06cbcbecacd48f343d6cb6c2b2ad2884bacf09)
-@@ -435,6 +435,8 @@
-     case lir_membar_loadstore:         // result and info always invalid
-     case lir_membar_storeload:         // result and info always invalid
-     case lir_on_spin_wait:
-+    case lir_rtm_xend:
-+    case lir_rtm_xabort:
-     {
-       assert(op->as_Op0() != NULL, "must be");
-       assert(op->_info == NULL, "info not used by this instruction");
-@@ -446,6 +448,8 @@
-     case lir_std_entry:                // may have result, info always invalid
-     case lir_osr_entry:                // may have result, info always invalid
-     case lir_get_thread:               // may have result, info always invalid
-+    case lir_rtm_xbegin:
-+    case lir_rtm_xtest:
-     {
-       assert(op->as_Op0() != NULL, "must be");
-       if (op->_info != NULL)           do_info(op->_info);
-@@ -1641,6 +1645,10 @@
-      case lir_label:                 s = "label";         break;
-      case lir_nop:                   s = "nop";           break;
-      case lir_on_spin_wait:          s = "on_spin_wait";  break;
-+     case lir_rtm_xbegin:            s = "rtm_xbegin";    break;
-+     case lir_rtm_xend:              s = "rtm_xend";      break;
-+     case lir_rtm_xabort:            s = "rtm_xabort";    break;
-+     case lir_rtm_xtest:             s = "rtm_xtest";     break;
-      case lir_backwardbranch_target: s = "backbranch";    break;
-      case lir_std_entry:             s = "std_entry";     break;
-      case lir_osr_entry:             s = "osr_entry";     break;
-Index: src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/s390/c1_LIRAssembler_s390.cpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -2855,6 +2855,22 @@
-   Unimplemented();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
- void LIR_Assembler::leal(LIR_Opr addr_opr, LIR_Opr dest) {
-   LIR_Address* addr = addr_opr->as_address_ptr();
-   assert(addr->scale() == LIR_Address::times_1, "scaling unsupported");
-Index: src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/x86/c1_LIRAssembler_x86.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -3925,6 +3925,22 @@
-   __ pause ();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result_reg) {
-+  __ xbegin(result_reg->as_register());
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  __ xend();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  __ xabort(0);
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result_reg) {
-+  __ xtest(result_reg->as_register());
-+}
-+
- void LIR_Assembler::get_thread(LIR_Opr result_reg) {
-   assert(result_reg->is_register(), "check");
- #ifdef _LP64
-Index: src/hotspot/share/c1/c1_LIRAssembler.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_LIRAssembler.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_LIRAssembler.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -682,6 +682,22 @@
-       on_spin_wait();
-       break;
-
-+    case lir_rtm_xbegin:
-+      rtm_xbegin(op->result_opr());
-+      break;
-+
-+    case lir_rtm_xend:
-+      rtm_xend();
-+      break;
-+
-+    case lir_rtm_xabort:
-+      rtm_xabort();
-+      break;
-+
-+    case lir_rtm_xtest:
-+      rtm_xtest(op->result_opr());
-+      break;
-+
-     default:
-       ShouldNotReachHere();
-       break;
-Index: src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/ppc/c1_LIRAssembler_ppc.cpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -2939,6 +2939,22 @@
-   Unimplemented();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
- void LIR_Assembler::leal(LIR_Opr addr_opr, LIR_Opr dest) {
-   LIR_Address* addr = addr_opr->as_address_ptr();
-   assert(addr->scale() == LIR_Address::times_1, "no scaling on this platform");
-Index: src/hotspot/share/c1/c1_LIR.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_LIR.hpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_LIR.hpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -901,6 +901,10 @@
-       , lir_membar_storeload
-       , lir_get_thread
-       , lir_on_spin_wait
-+      , lir_rtm_xbegin
-+      , lir_rtm_xend
-+      , lir_rtm_xabort
-+      , lir_rtm_xtest
-   , end_op0
-   , begin_op1
-       , lir_fxch
-@@ -2064,6 +2068,11 @@
-
-   void on_spin_wait()                            { append(new LIR_Op0(lir_on_spin_wait)); }
-
-+  void rtm_xbegin(LIR_Opr result)                { append(new LIR_Op0(lir_rtm_xbegin, result)); }
-+  void rtm_xend()                                { append(new LIR_Op0(lir_rtm_xend)); }
-+  void rtm_xabort()                              { append(new LIR_Op0(lir_rtm_xabort)); }
-+  void rtm_xtest(LIR_Opr result)                 { append(new LIR_Op0(lir_rtm_xtest, result)); }
-+
-   void branch_destination(Label* lbl)            { append(new LIR_OpLabel(lbl)); }
-
-   void negate(LIR_Opr from, LIR_Opr to)          { append(new LIR_Op1(lir_neg, from, to)); }
-Index: src/hotspot/share/c1/c1_LIRAssembler.hpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_LIRAssembler.hpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_LIRAssembler.hpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -252,6 +252,10 @@
-   void membar_loadstore();
-   void membar_storeload();
-   void on_spin_wait();
-+  void rtm_xbegin(LIR_Opr result);
-+  void rtm_xend();
-+  void rtm_xabort();
-+  void rtm_xtest(LIR_Opr result);
-   void get_thread(LIR_Opr result);
-
-   void verify_oop_map(CodeEmitInfo* info);
-Index: src/hotspot/share/opto/matcher.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/opto/matcher.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/opto/matcher.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -952,6 +952,10 @@
-     case Op_StrInflatedCopy:
-     case Op_StrCompressedCopy:
-     case Op_OnSpinWait:
-+    case Op_XBegin:
-+    case Op_XEnd:
-+    case Op_XAbort:
-+    case Op_XTest:
-     case Op_EncodeISOArray:
-       nidx = Compile::AliasIdxTop;
-       nat = NULL;
-Index: src/hotspot/share/c1/c1_Compiler.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_Compiler.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_Compiler.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -135,6 +135,12 @@
-   case vmIntrinsics::_onSpinWait:
-     if (!VM_Version::supports_on_spin_wait()) return false;
-     break;
-+  case vmIntrinsics::_rtm_xbegin:
-+  case vmIntrinsics::_rtm_xend:
-+  case vmIntrinsics::_rtm_xabort:
-+  case vmIntrinsics::_rtm_xtest:
-+    if (!VM_Version::supports_rtm()) return false;
-+    break;
-   case vmIntrinsics::_arraycopy:
-   case vmIntrinsics::_currentTimeMillis:
-   case vmIntrinsics::_nanoTime:
-Index: src/hotspot/share/c1/c1_LIRGenerator.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/share/c1/c1_LIRGenerator.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/share/c1/c1_LIRGenerator.cpp	(revision 47057:f70dba6caded47084af48813a4fdeae056c5ab15)
-@@ -3238,6 +3238,18 @@
-   case vmIntrinsics::_onSpinWait:
-     __ on_spin_wait();
-     break;
-+  case vmIntrinsics::_rtm_xbegin:
-+    __ rtm_xbegin(rlock_result(x));
-+    break;
-+  case vmIntrinsics::_rtm_xend:
-+    __ rtm_xend();
-+    break;
-+  case vmIntrinsics::_rtm_xabort:
-+    __ rtm_xabort();
-+    break;
-+  case vmIntrinsics::_rtm_xtest:
-+    __ rtm_xtest(rlock_result(x));
-+    break;
-   case vmIntrinsics::_Reference_get:
-     do_Reference_get(x);
-     break;
-Index: src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
---- src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp	(revision 47056:28a0d8c90ee24328345f78167e11d2dff01ca07d)
-+++ src/hotspot/cpu/arm/c1_LIRAssembler_arm.cpp	(revision 47059:b0596a473ced4224cad32a112f08ec4398e53f0b)
-@@ -3405,6 +3405,22 @@
-   Unimplemented();
- }
-
-+void LIR_Assembler::rtm_xbegin(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xend() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xabort() {
-+  Unimplemented();
-+}
-+
-+void LIR_Assembler::rtm_xtest(LIR_Opr result) {
-+  Unimplemented();
-+}
-+
- void LIR_Assembler::get_thread(LIR_Opr result_reg) {
-   // Not used on ARM
-   Unimplemented();
